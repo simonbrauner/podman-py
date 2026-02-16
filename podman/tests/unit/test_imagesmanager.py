@@ -671,6 +671,47 @@ class ImagesManagerTestCase(unittest.TestCase):
         self.assertEqual(image.id, image_id)
 
     @requests_mock.Mocker()
+    def test_pull_no_compat_mode(self, mock):
+        image_id = "sha256:326dd9d7add24646a325e8eaa82125294027db2332e49c5828d96312c5d773ab"
+        mock.post(
+            tests.LIBPOD_URL + "/images/pull?reference=quay.io%2ffedora%3Alatest&quiet=True",
+            json={
+                "error": "",
+                "id": image_id,
+                "images": [image_id],
+                "stream": "",
+            },
+        )
+        mock.get(
+            tests.LIBPOD_URL + "/images"
+            "/sha256%3A326dd9d7add24646a325e8eaa82125294027db2332e49c5828d96312c5d773ab/json",
+            json=FIRST_IMAGE,
+        )
+
+        image = self.client.images.pull("quay.io/fedora", "latest", compatMode=False)
+        self.assertEqual(image.id, image_id)
+
+    @requests_mock.Mocker()
+    def test_pull_no_compat_mode_no_image(self, mock):
+        mock.post(
+            tests.LIBPOD_URL + "/images/pull?reference=quay.io%2ffedora%3Alatest&quiet=True",
+            status_code=404,
+        )
+
+        with self.assertRaises(APIError):
+            self.client.images.pull("quay.io/fedora", "latest", compatMode=False)
+
+    @requests_mock.Mocker()
+    def test_pull_no_compat_mode_no_image_stream(self, mock):
+        mock.post(
+            tests.LIBPOD_URL + "/images/pull?reference=quay.io%2ffedora%3Alatest",
+            status_code=404,
+        )
+
+        with self.assertRaises(APIError):
+            self.client.images.pull("quay.io/fedora", "latest", compatMode=False, stream=True)
+
+    @requests_mock.Mocker()
     def test_list_with_name_parameter(self, mock):
         """Test that name parameter is correctly converted to a reference filter"""
         mock.get(
