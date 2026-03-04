@@ -1,6 +1,9 @@
+import json
 import types
 import unittest
 from unittest.mock import patch
+
+import requests
 
 try:
     # Python >= 3.10
@@ -12,6 +15,7 @@ except ImportError:
 import requests_mock
 
 from podman import PodmanClient, tests
+from podman.api.client import APIResponse
 from podman.domain.images import Image
 from podman.domain.images_manager import ImagesManager
 from podman.errors import APIError, ImageNotFound, PodmanError
@@ -701,8 +705,17 @@ class ImagesManagerTestCase(unittest.TestCase):
         with self.assertRaises(APIError):
             self.client.images.pull("quay.io/fedora", "latest", compatMode=False)
 
+    def test_pull_no_compat_mode_stream(self):
+        message = json.dumps({"stream": "Trying to pull image..."})
+        with patch.object(self.client.api, "post", side_effect=stream_helper(message)):
+            stream = self.client.images.pull(
+                "quay.io/fedora", "latest", compatMode=False, stream=True
+            )
+            self.assertEqual(next(stream), bytes(message, "utf-8"))
+
     @requests_mock.Mocker()
     def test_pull_no_compat_mode_no_image_stream(self, mock):
+        # With error status code
         mock.post(
             tests.LIBPOD_URL + "/images/pull?reference=quay.io%2ffedora%3Alatest",
             status_code=404,
@@ -710,6 +723,15 @@ class ImagesManagerTestCase(unittest.TestCase):
 
         with self.assertRaises(APIError):
             self.client.images.pull("quay.io/fedora", "latest", compatMode=False, stream=True)
+
+        # With success status code
+        message = json.dumps({"error": "Failed to pull image"})
+        with self.assertRaises(APIError):
+            with patch.object(self.client.api, "post", side_effect=stream_helper(message)):
+                stream = self.client.images.pull(
+                    "quay.io/fedora", "latest", compatMode=False, stream=True
+                )
+                next(stream)
 
     @requests_mock.Mocker()
     def test_list_with_name_parameter(self, mock):
@@ -792,6 +814,34 @@ class ImagesManagerTestCase(unittest.TestCase):
 
         self.assertEqual(len(images), 1)
         self.assertIsInstance(images[0], Image)
+
+
+def stream_helper(message):
+    payload = message.encode("utf-8")
+
+    class _FP:
+        chunked = True
+        chunk_left = 0
+
+    class _Raw:
+        def __init__(self, data: bytes):
+            self._fp = _FP()
+            self._data = data
+            self._pos = 0
+            self.closed = False
+
+        def read(self, n: int) -> bytes:
+            return payload
+
+    response = requests.Response()
+    response.status_code = 200
+    response.url = tests.LIBPOD_URL + "/images/pull"
+    response.raw = _Raw(payload)
+
+    def mocked_response(*_args, **_kwargs):
+        return APIResponse(response)
+
+    return mocked_response
 
 
 if __name__ == '__main__':
